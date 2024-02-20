@@ -6,6 +6,7 @@ import (
 	"os"
 	"path"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -237,10 +238,32 @@ func (arch *Archiver) SaveDir(ctx context.Context, snPath string, dir string, fi
 		return FutureNode{}, err
 	}
 	sort.Strings(names)
-
+	previousNodes := make(map[string]*restic.Node)
+	if os.Getenv("RESTIC_WORM") != "" && previous != nil {
+		for _, node := range previous.Nodes {
+			if _, found := slices.BinarySearch(names, node.Name); !found {
+				previousNodes[node.Name] = node
+			}
+		}
+	}
+	for name := range previousNodes {
+		names = append(names, name)
+	}
+	sort.Strings(names)
 	nodes := make([]FutureNode, 0, len(names))
 
 	for _, name := range names {
+		if node, ok := previousNodes[name]; ok {
+			pathname := arch.FS.Join(dir, name)
+			snItem := join(snPath, name)
+			nodes = append(nodes, newFutureNodeWithResult(futureNodeResult{
+				snPath: snItem,
+				target: pathname,
+				node:   node,
+			}))
+			continue
+		}
+
 		// test if context has been cancelled
 		if ctx.Err() != nil {
 			debug.Log("context has been cancelled, aborting")
